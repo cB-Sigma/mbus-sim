@@ -1,0 +1,47 @@
+mbus-sim (a simulated wired M-Bus segment, wireless M-Bus meters and
+receiver sticks, in Go)
+Copyright 2026 Abhinav Gautam
+
+This module is licensed under the Apache License, Version 2.0 (LICENSE).
+
+The code was written for SigmaM2M, a oneM2M platform, from the published
+standards listed in PROVENANCE.md, by the author of the mbus module. It
+contains no code from other projects. Source files without a per-file
+header are covered by the copyright line above; files added for this
+module carry "Copyright 2026 Abhinav Gautam" and
+"SPDX-License-Identifier: Apache-2.0".
+
+Dependencies
+------------
+
+- github.com/cB-Sigma/mbus (the frames, records and security the
+  simulators encode with, and the master and decoder the tests read them
+  with): Apache-2.0, Copyright 2026 Abhinav Gautam.
+- github.com/cB-Sigma/dlms and github.com/cB-Sigma/iotcrypto (through
+  mbus): Apache-2.0, Copyright 2026 Abhinav Gautam.
+- github.com/cB-Sigma/tlsx v0.6.0 (through mbus, security mode 13): a fork
+  of Go's crypto/tls, Copyright The Go Authors, changes and additions
+  Copyright 2026 Abhinav Gautam; BSD-3-Clause with Google's patent grant.
+- golang.org/x/crypto and golang.org/x/sys (through tlsx and iotcrypto):
+  BSD-3-Clause, Copyright The Go Authors.
+- github.com/goburrow/serial v0.1.0 (through mbus): MIT License,
+  Copyright (c) 2015 Quoc-Viet Nguyen.
+- gopkg.in/yaml.v3 v3.0.1 (through mbus): MIT and Apache-2.0.
+- Otherwise the Go standard library only.
+
+Test values
+-----------
+
+Every meter ID, manufacturer code, key, access number and reading in
+this module is a test value, not that of a real meter. Do not use the
+keys on real devices.
+
+Trademarks
+----------
+
+OMS is a name of the OMS Group; iM871A is a product of IMST GmbH; Amber
+is a name of AMBER wireless (Würth Elektronik eiSos). EN 13757 is published by CEN.
+These names are used only to say which protocols and receiver framings
+the simulators imitate. This project is not affiliated with, certified
+by, sponsored or endorsed by any of these companies or bodies, and the
+simulators are not conformance references.
