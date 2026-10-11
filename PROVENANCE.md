@@ -26,7 +26,8 @@ words.
 | Package | Followed |
 |---|---|
 | `sim` (wired) | EN 13757-2:2018+A1:2023 (the slave side of the link layer: FT1.2, the frame count bit, collisions), EN 13757-3:2025 (selection, application reset and select, primary address changes, baud rate switching, alarms, fixed data, image transfer), EN 13757-1:2021 8.2.4 (DLMS transport PDUs) |
-| `sim` (wireless) | EN 13757-4:2025 (frame format A, the receive window of bidirectional meters), EN 13757-7:2025 (security modes 0, 5 and 7, KDF-A, AFL CMAC), and the receiver framings of the iM871A HCI and Amber command mode as the mbus `wireless.Reader` reads them |
+| `sim` (wireless) | EN 13757-4:2025 (frame formats A and B, the receive window of bidirectional meters, the hop bit), EN 13757-7:2025 (security modes 0, 5, 7 to 10, KDF-A, AFL CMAC), EN 13757-3:2025 annex G (compact frames), and the receiver framings and mode commands of the iM871A HCI, Amber command mode, culfw and rtl-wmbus as mbus's `wireless` package reads and sends them (from the makers' published interface documents) |
+| `sim` (repeater) | EN 13757-2:2018+A1:2023 5.7.5 (address 251; its commands are the test's own, as the standard defines none) |
 
 It is a test peer, not a conformance reference: it was written by the
 same author from the same documents as the master and decoder, so tests

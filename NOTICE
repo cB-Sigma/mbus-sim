@@ -29,6 +29,18 @@ Dependencies
 - gopkg.in/yaml.v3 v3.0.1 (through mbus): MIT and Apache-2.0.
 - Otherwise the Go standard library only.
 
+Interop peers (run, not included)
+--------------------------------
+
+interop/libmbus.Dockerfile builds libmbus 0.10.3 (BSD-3-Clause,
+Copyright (c) 2010-2012 Raditex Control AB; https://github.com/rscada/
+libmbus) from its tag on debian:bookworm-20240926-slim, with its TCP
+answer timeout lowered from 4 s to 1 s, to run its commands against the
+simulated bus in the interop tests. Nothing of libmbus is kept in this
+repository; rSCADA and Raditex Control are credited as libmbus asks.
+wmbusmeters (GPL-3.0-or-later) is run from its published image in the
+same way.
+
 Test values
 -----------
 
@@ -40,7 +52,8 @@ Trademarks
 ----------
 
 OMS is a name of the OMS Group; iM871A is a product of IMST GmbH; Amber
-is a name of AMBER wireless (Würth Elektronik eiSos). EN 13757 is published by CEN.
+is a name of AMBER wireless (Würth Elektronik eiSos); CUL and culfw
+belong to their authors, rtl-wmbus to its author. EN 13757 is published by CEN.
 These names are used only to say which protocols and receiver framings
 the simulators imitate. This project is not affiliated with, certified
 by, sponsored or endorsed by any of these companies or bodies, and the

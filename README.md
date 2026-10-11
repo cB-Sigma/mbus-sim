@@ -9,10 +9,13 @@ serial-to-IP converter. Its slaves answer with primary and secondary
 addresses, keep a frame count bit per address, collide in the search as
 real meters do, and support multi-telegram reads, alarms, application
 select and reset, address changes, baud rate switching, fixed data,
-image transfer and DLMS APDUs. The wireless meter builds telegrams in
-security mode 0, 5 or 7 and, when bidirectional, takes and acknowledges
-the frames a gateway sends in its receive window; the stick carries them
-in iM871A or Amber framing over TCP. It is built on
+image transfer and DLMS APDUs, and a primary master repeater can be
+plugged in at address 251. The wireless meter builds telegrams in
+security modes 0, 5, 7, 8, 9 and 10, in frame format A or B, relayed by
+a repeater or as compact frames, and, when bidirectional, takes and
+acknowledges the frames a gateway sends in its receive window; the stick
+carries them in iM871A, Amber, CUL or rtl-wmbus framing over TCP and
+confirms the mode commands of the first three. It is built on
 [mbus](https://github.com/cB-Sigma/mbus), without cgo. Written for
 SigmaM2M, a oneM2M platform; it has no dependency on it.
 
@@ -20,14 +23,15 @@ SigmaM2M, a oneM2M platform; it has no dependency on it.
 
 | Package | What it does |
 |---|---|
-| `sim` | `Bus` and `Slave`: a wired segment over TCP (SND_NKE, selection by primary or secondary address with wildcards, REQ_UD2 with one or more telegrams by FCB, REQ_UD1 alarms, application select and reset, SND_UD changes, baud rates, fixed data, image transfer, DLMS behind CI 60h/61h and 7Ch/7Dh, collisions, a silent or lenient frame count bit meter); counters of what the master sent (`Frames`, `Repeats`, `Counts`, `Alarms`, `Times`). `Meter` and `Stick`: a Wireless M-Bus meter (format A, security modes 0, 5 and 7, bidirectional) behind an iM871A or Amber stick over TCP |
+| `sim` | `Bus` and `Slave`: a wired segment over TCP (SND_NKE, selection by primary or secondary address with wildcards, REQ_UD2 with one or more telegrams by FCB, REQ_UD1 alarms, application select and reset, SND_UD changes, baud rates, fixed data, image transfer, DLMS behind CI 60h/61h and 7Ch/7Dh, collisions, a silent or lenient frame count bit meter, a repeater at address 251 (`Bus.Repeater`)); counters of what the master sent (`Frames`, `Repeats`, `Counts`, `Alarms`, `Times`, `RepeaterFrames`). `Meter` and `Stick`: a Wireless M-Bus meter (security modes 0, 5, 7, 8, 9, 10; `Radio` with format A or B CRCs; `Relayed` with the hop bit; `Compact` frames with a full frame every `FullEvery`; bidirectional) behind an iM871A, Amber, CUL or rtl-wmbus stick over TCP that confirms mode commands (`Stick.Mode`) |
 | `cmd/mbussim` | Serves a wired segment with a few water meters |
 | `cmd/wmbussim` | Serves a receiver stick with one bidirectional meter |
 | `wiredtest` | No code: the tests of mbus's master against the simulated bus |
 
-Not simulated: the physical layer (levels, real baud rates), repeaters,
-frame format B and security modes 8 to 10 and 13 on the wireless meter,
-radio timing, and other sticks' native protocols.
+Not simulated: the physical layer (levels, real baud rates), radio
+timing, security mode 13, AFL fragments, SITP answers, mode C and F
+encodings (FEC) on the wireless meter, compact frames in modes 7 to 10,
+and Radiocrafts or Embit sticks.
 
 ## Install
 
@@ -60,9 +64,9 @@ ABC-12345678 (water) with the key `-key`, sending a volume record.
 | mbussim | `-listen` | `127.0.0.1:10001` | TCP address of the simulated converter |
 | mbussim | `-meters` | `2` | meters on the bus (1 to 9) |
 | wmbussim | `-listen` | `127.0.0.1:9001` | TCP address of the simulated stick |
-| wmbussim | `-framer` | `im871a` | stick framing: `im871a` or `amber` |
+| wmbussim | `-framer` | `im871a` | stick framing: `im871a`, `amber`, `cul` or `rtlwmbus` |
 | wmbussim | `-key` | `000102030405060708090A0B0C0D0E0F` | the meter's AES-128 key (a test value) |
-| wmbussim | `-mode` | `5` | security mode: 0, 5 or 7 |
+| wmbussim | `-mode` | `5` | security mode: 0, 5, 7, 8, 9 or 10 |
 | wmbussim | `-every` | `10s` | how often the meter transmits |
 
 ## In Go tests
@@ -130,9 +134,24 @@ with its iperl driver: 36 of 36 telegrams decoded, by wmbusmeters and by
 simulator encoded. As a control, with a wrong key wmbusmeters rejects
 the telegrams and prints no reading.
 
-Not yet: the wired bus against another master (libmbus's or a real
-level converter), the receiver stick framings against a real gateway,
-and a real meter.
+Against libmbus 0.10.3 (commit d617bd2, BSD-3-Clause) as the master, on
+2026-10-11: built from its tag in Docker (`interop/libmbus.Dockerfile`,
+with its TCP answer timeout lowered from 4 s to 1 s so a primary scan
+ends in about four minutes; image removed after the run), its own
+commands against a simulated bus of three water meters
+(`cd interop && SIGMA_MBUS_INTEROP=1 go test -run Libmbus -timeout 25m
+./...`): `mbus-tcp-scan` found 3 of 3 slaves at their primary
+addresses; `mbus-tcp-scan-secondary` found 3 of 3 by the wildcard
+search, through the simulated collisions; `mbus-tcp-request-data` read
+each slave by primary address and one by secondary address, with the
+ID, manufacturer, volume and flow temperature the simulator holds;
+`mbus-tcp-request-data-multi-reply` followed "more records follow" to
+each slave's second telegram.
+
+Not yet: a real level converter, gateway, stick or meter (the stick
+mode commands and the CUL and rtl-wmbus framings were checked only
+against mbus's own reader); repeater commands of a real repeater (the
+standard defines none).
 
 ## Related repositories
 

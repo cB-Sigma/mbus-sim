@@ -6,7 +6,10 @@
 // and 7, with and without the extended link layer of a bidirectional
 // meter) are decoded by wmbusmeters, an independent wM-Bus decoder
 // (GPL-3.0-or-later), and its JSON output is compared with what the
-// simulator encoded.
+// simulator encoded. libmbus 0.10.3 (BSD-3-Clause), built from its tag
+// by libmbus.Dockerfile, runs its own TCP commands as the master of the
+// simulated wired bus (scans by primary and secondary address, reads);
+// remove its image afterwards with "docker image rm sigma-libmbus:0.10.3".
 //
 // wmbusmeters runs in its published Docker image, pinned by tag and
 // digest, with no network; the telegrams reach it as a simulation file

@@ -42,7 +42,7 @@ func TestStart(t *testing.T) {
 	if err != nil || tg.Mode != 7 || tg.Meter.Key() != "ABC-12345678" {
 		t.Fatalf("%v %+v", err, tg)
 	}
-	for _, bad := range []config{{framer: "raw", key: c.key}, {framer: wireless.FramerIM871A, key: "00"}, {framer: wireless.FramerIM871A, key: c.key, mode: 9}} {
+	for _, bad := range []config{{framer: "raw", key: c.key}, {framer: wireless.FramerIM871A, key: "00"}, {framer: wireless.FramerIM871A, key: c.key, mode: 11}} {
 		if _, err := start(bad, &out); err == nil {
 			t.Errorf("%+v accepted", bad)
 		}

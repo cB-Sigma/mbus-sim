@@ -110,14 +110,19 @@ type Slave struct {
 
 // Bus is the simulated segment.
 type Bus struct {
-	mu     sync.Mutex
-	slaves []*Slave
-	ln     net.Listener
-	addr   string
-	conn   net.Conn
-	frames []wired.Frame
-	times  []time.Time
-	baud   int // the master's current rate (0: every slave hears it)
+	// Repeater, when set, answers frames to address 251 (the primary
+	// master repeater's management address) with the frame it returns
+	// (nil: no answer). Without it, address 251 is silent.
+	Repeater       func(wired.Frame) *wired.Frame
+	repeaterFrames []wired.Frame
+	mu             sync.Mutex
+	slaves         []*Slave
+	ln             net.Listener
+	addr           string
+	conn           net.Conn
+	frames         []wired.Frame
+	times          []time.Time
+	baud           int // the master's current rate (0: every slave hears it)
 	// DropNext answers are lost, CorruptNext answers arrive with a wrong
 	// checksum, and every answer byte is written ByteDelay apart (set
 	// under Lock).
@@ -324,6 +329,18 @@ func (s *Slave) repeated(a byte, fcb int8) bool {
 // answer builds the bus's answer to a frame (under mu).
 func (b *Bus) answer(f wired.Frame) []byte {
 	ack := []byte{wired.ACK}
+	if f.A == wired.AddrRepeater && !f.Single && !f.Nack {
+		// The primary master repeater's management address: answered by
+		// the Repeater hook, silence without one (no repeater).
+		if b.Repeater == nil {
+			return nil
+		}
+		b.repeaterFrames = append(b.repeaterFrames, f)
+		if r := b.Repeater(f); r != nil {
+			return r.Encode()
+		}
+		return nil
+	}
 	switch {
 	case !f.Long && f.C == wired.CSndNke:
 		if f.A == wired.AddrBroadcast {
@@ -682,4 +699,11 @@ func (b *Bus) DLMSRequests(s *Slave) [][]byte {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	return append([][]byte(nil), s.dlmsReqs...)
+}
+
+// RepeaterFrames lists the frames the master sent to address 251.
+func (b *Bus) RepeaterFrames() []wired.Frame {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return append([]wired.Frame(nil), b.repeaterFrames...)
 }

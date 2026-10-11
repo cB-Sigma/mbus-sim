@@ -36,9 +36,19 @@ type Meter struct {
 	Status  byte
 	// Bidirectional adds an ELL whose CC field opens a receive window.
 	Bidirectional bool
+	// Relayed marks the telegram as relayed by a repeater (the hop bit H
+	// of the ELL's CC field; an ELL is added for it).
+	Relayed bool
+	// Compact sends compact frames (EN 13757-3 annex G) after the first
+	// full frame; a full frame follows every FullEvery telegrams (default
+	// 4) so a receiver that heard compact frames first learns the format.
+	// Security modes 0 and 5.
+	Compact   bool
+	FullEvery int
 
 	mu       sync.Mutex
 	acc      byte
+	sentN    int // telegrams of a compact-sending meter so far
 	counter  uint32
 	dec      wireless.Decoder
 	received []*wireless.Telegram
@@ -76,24 +86,43 @@ func (m *Meter) Telegram() ([]byte, error) {
 	acc, ctr := m.acc, m.counter
 	m.mu.Unlock()
 	var body []byte
-	if m.Bidirectional {
-		body = append(body, wireless.CIELL2, wireless.CCBidirectional, acc)
+	if m.Bidirectional || m.Relayed {
+		var cc byte
+		if m.Bidirectional {
+			cc |= wireless.CCBidirectional
+		}
+		if m.Relayed {
+			cc |= wireless.CCHop
+		}
+		body = append(body, wireless.CIELL2, cc, acc)
 	}
 	apl := m.Records
+	ci := byte(wireless.CIShortHeader)
+	if m.Compact {
+		if ci, apl, err = m.compact(acc); err != nil {
+			return nil, err
+		}
+	}
 	var tpdu []byte
 	switch m.Mode {
 	case 0:
-		tpdu, err = wireless.SealTPL(wireless.CIShortHeader, false, h, acc, m.Status, 0, wireless.Seal{KeyVersion: -1}, apl)
+		tpdu, err = wireless.SealTPL(ci, false, h, acc, m.Status, 0, wireless.Seal{KeyVersion: -1}, apl)
 	case 5:
-		tpdu, err = wireless.SealTPL(wireless.CIShortHeader, false, h, acc, m.Status, 0, wireless.Seal{Mode: 5, Key: m.Key, KeyVersion: -1}, apl)
+		tpdu, err = wireless.SealTPL(ci, false, h, acc, m.Status, 0, wireless.Seal{Mode: 5, Key: m.Key, KeyVersion: -1}, apl)
 	case 7:
 		tpdu, err = wireless.SealTPL(wireless.CIShortHeader, false, h, acc, m.Status, 0,
 			wireless.Seal{Mode: 7, Key: m.Key, KDF: 1, KeyVersion: -1, Counter: ctr}, apl)
 		if err == nil {
 			tpdu, err = wireless.SealAFL(tpdu, h, m.Key, 1, ctr, 5, nil, false)
 		}
+	case 8, 9, 10:
+		if m.Compact {
+			return nil, fmt.Errorf("compact frames: modes 0 and 5 only")
+		}
+		tpdu, err = wireless.SealTPL(wireless.CIShortHeader, false, h, acc, m.Status, 0,
+			wireless.Seal{Mode: m.Mode, Key: m.Key, KDF: 1, KeyVersion: -1, Counter: ctr, CounterInTPL: true}, apl)
 	default:
-		return nil, fmt.Errorf("security mode %d: the simulator sends modes 0, 5 and 7", m.Mode)
+		return nil, fmt.Errorf("security mode %d: the simulator sends modes 0, 5, 7, 8, 9 and 10", m.Mode)
 	}
 	if err != nil {
 		return nil, err
@@ -155,8 +184,11 @@ func (m *Meter) Received() []*wireless.Telegram {
 // mode), and passes the frames a gateway sends back to the meters, whose
 // acknowledgements it delivers in turn.
 type Stick struct {
-	Framer string // wireless.FramerIM871A (default) or wireless.FramerAmber
+	// Framer is wireless.FramerIM871A (default), FramerAmber, FramerCUL or
+	// FramerRTLWMBUS (receive only).
+	Framer string
 	Meters []*Meter
+	mode   string // the mode a gateway set, as the stick's code ("im871a:03", "amber:09", "cul:brc")
 
 	mu    sync.Mutex
 	ln    net.Listener
@@ -251,9 +283,18 @@ func (s *Stick) deliver(t []byte) error {
 
 // EncodeIndication frames a CRC-less telegram (with L) as a receiver
 // stick delivers it: an iM871A radio-link message indication with the
-// HCI CRC, or an Amber command-mode data indication. Neither carries L.
+// HCI CRC or an Amber command-mode data indication (neither carries L), a
+// culfw text line or an rtl-wmbus text line.
 func EncodeIndication(framer string, t []byte) []byte {
 	p := t[1:]
+	switch framer {
+	case wireless.FramerCUL:
+		// culfw after X21: "b", the format A frame with its CRCs in hex,
+		// then LQI and RSSI (a fixed -60 dBm here).
+		return []byte("b" + strings.ToUpper(hex.EncodeToString(wireless.AddCRCA(t))) + "28" + "1C" + "\r\n")
+	case wireless.FramerRTLWMBUS:
+		return []byte("T1;1;1;2026-01-01 00:00:00.000;100;90;" + fmt.Sprintf("%X", t[4:8]) + ";0x" + strings.ToLower(hex.EncodeToString(t)) + "\n")
+	}
 	if framer == wireless.FramerAmber {
 		b := append([]byte{wireless.AmberStart, wireless.AmberDataInd, byte(len(p))}, p...)
 		var cs byte
@@ -277,9 +318,16 @@ func (s *Stick) serve(c net.Conn) {
 	}()
 	r := bufio.NewReader(c)
 	for {
-		f, err := readRequest(r, s.Framer)
+		f, cmd, err := s.readRequest(r)
 		if err != nil {
 			return
+		}
+		if cmd != nil {
+			// A configuration command: the stick confirms it.
+			s.mu.Lock()
+			_, _ = c.Write(cmd)
+			s.mu.Unlock()
+			continue
 		}
 		s.mu.Lock()
 		s.sent = append(s.sent, f)
@@ -292,42 +340,89 @@ func (s *Stick) serve(c net.Conn) {
 	}
 }
 
-// readRequest reads one data request (a frame to send) in the stick's
-// framing and returns the frame with its L field.
-func readRequest(r *bufio.Reader, framer string) ([]byte, error) {
+// Mode is the mode a gateway last set on the stick, as the stick's own
+// code ("im871a:03", "amber:09", "cul:brc"), or "".
+func (s *Stick) Mode() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.mode
+}
+
+func (s *Stick) setMode(m string) {
+	s.mu.Lock()
+	s.mode = m
+	s.mu.Unlock()
+}
+
+// readRequest reads the gateway's next data request (a frame to send,
+// returned with its L field) or configuration command (the stick's
+// confirmation is returned instead).
+func (s *Stick) readRequest(r *bufio.Reader) (frame, reply []byte, err error) {
+	switch s.Framer {
+	case wireless.FramerCUL:
+		for {
+			line, err := r.ReadString('\n')
+			if err != nil {
+				return nil, nil, err
+			}
+			switch cmd := strings.TrimSpace(line); cmd {
+			case "brt", "brs", "brc":
+				s.setMode("cul:" + cmd)
+				return nil, []byte(map[string]string{"brt": "TMODE", "brs": "SMODE", "brc": "CMODE"}[cmd] + "\r\n"), nil
+			}
+		}
+	case wireless.FramerRTLWMBUS:
+		// A receiver only: whatever arrives is ignored.
+		for {
+			if _, err := r.ReadByte(); err != nil {
+				return nil, nil, err
+			}
+		}
+	}
 	for {
 		b, err := r.ReadByte()
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
-		if framer == wireless.FramerAmber {
+		if s.Framer == wireless.FramerAmber {
 			if b != wireless.AmberStart {
 				continue
 			}
 			hdr := make([]byte, 2)
 			if _, err := io.ReadFull(r, hdr); err != nil {
-				return nil, err
+				return nil, nil, err
 			}
 			body := make([]byte, int(hdr[1])+1)
 			if _, err := io.ReadFull(r, body); err != nil {
-				return nil, err
+				return nil, nil, err
 			}
 			cs := byte(wireless.AmberStart) ^ hdr[0] ^ hdr[1]
 			for _, x := range body[:len(body)-1] {
 				cs ^= x
 			}
-			if cs != body[len(body)-1] || hdr[0] != wireless.AmberDataReq {
+			if cs != body[len(body)-1] {
 				continue
 			}
 			p := body[:len(body)-1]
-			return append([]byte{byte(len(p))}, p...), nil
+			switch hdr[0] {
+			case wireless.AmberDataReq:
+				return append([]byte{byte(len(p))}, p...), nil, nil
+			case wireless.AmberSetModeReq:
+				if len(p) != 1 {
+					continue
+				}
+				s.setMode(fmt.Sprintf("amber:%02X", p[0]))
+				c := []byte{wireless.AmberStart, wireless.AmberSetModeCnf, 1, 0}
+				return nil, append(c, wireless.AmberStart^wireless.AmberSetModeCnf^1^0), nil
+			}
+			continue
 		}
 		if b != wireless.IM871ASOF {
 			continue
 		}
 		hdr := make([]byte, 3)
 		if _, err := io.ReadFull(r, hdr); err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		n := int(hdr[2])
 		extra := 0
@@ -336,7 +431,7 @@ func readRequest(r *bufio.Reader, framer string) ([]byte, error) {
 		}
 		body := make([]byte, n+extra)
 		if _, err := io.ReadFull(r, body); err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		if extra == 2 {
 			got := uint16(body[n]) | uint16(body[n+1])<<8
@@ -344,9 +439,17 @@ func readRequest(r *bufio.Reader, framer string) ([]byte, error) {
 				continue
 			}
 		}
-		if hdr[0]&0x0F != wireless.IM871ARadioLink || hdr[1] != wireless.IM871ADataReq {
-			continue
+		switch {
+		case hdr[0]&0x0F == wireless.IM871ARadioLink && hdr[1] == wireless.IM871ADataReq:
+			return append([]byte{byte(n)}, body[:n]...), nil, nil
+		case hdr[0]&0x0F == wireless.IM871ADevMgmt && hdr[1] == wireless.IM871ASetConfigReq:
+			// Byte 1's bit 1 says the radio mode follows.
+			if n >= 3 && body[1]&0x02 != 0 {
+				s.setMode(fmt.Sprintf("im871a:%02X", body[2]))
+			}
+			return nil, wireless.IM871AFrame(wireless.IM871ADevMgmt, wireless.IM871ASetConfigRsp, []byte{0}), nil
+		case hdr[0]&0x0F == wireless.IM871ADevMgmt && hdr[1] == wireless.IM871APingReq:
+			return nil, wireless.IM871AFrame(wireless.IM871ADevMgmt, wireless.IM871APingRsp, nil), nil
 		}
-		return append([]byte{byte(n)}, body[:n]...), nil
 	}
 }
